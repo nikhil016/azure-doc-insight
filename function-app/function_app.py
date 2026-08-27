@@ -3,40 +3,46 @@ import datetime
 import json
 import logging
 import os
-from pathlib import Path
 from uuid import uuid4
 
+from azure.cosmos import CosmosClient
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 app = func.FunctionApp()
 
-STATUS_DIR = Path(os.environ.get("HOME", "/tmp")) / "data" / "document-status"
 SERVICE_BUS_QUEUE = "document-processing"
+COSMOS_DATABASE = "ai200-doc-insight"
+COSMOS_CONTAINER = "documents"
+
+
+def get_documents_container():
+    client = CosmosClient(os.environ["COSMOS_ENDPOINT"], os.environ["COSMOS_KEY"])
+    return client.get_database_client(COSMOS_DATABASE).get_container_client(COSMOS_CONTAINER)
 
 
 @app.blob_trigger(arg_name="blob", path="uploads/{name}", connection="AzureWebJobsStorage")
 def on_document_uploaded(blob: func.InputStream):
     document_id = str(uuid4())
     blob_uri = f"https://{os.environ['STORAGE_ACCOUNT_NAME']}.blob.core.windows.net/{blob.name}"
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     record = {
         "id": document_id,
         "blob_name": blob.name,
+        "blob_uri": blob_uri,
         "size_bytes": blob.length,
         "status": "uploaded",
-        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "created_at": now,
+        "updated_at": now,
     }
 
-    STATUS_DIR.mkdir(parents=True, exist_ok=True)
-    status_file = STATUS_DIR / f"{document_id}.json"
-    status_file.write_text(json.dumps(record))
+    get_documents_container().upsert_item(record)
 
     logging.info(
-        "Blob read: name=%s size=%s document_id=%s status_file=%s",
+        "Blob read and status recorded: name=%s size=%s document_id=%s",
         blob.name,
         blob.length,
         document_id,
-        status_file,
     )
 
     connection_string = os.environ["SERVICE_BUS_CONNECTION_STRING"]
