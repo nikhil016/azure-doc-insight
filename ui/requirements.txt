@@ -1,0 +1,10 @@
+streamlit
+azure-cosmos
+azure-storage-blob
+azure-servicebus
+azure-identity
+azure-keyvault-secrets
+psycopg2-binary
+pypdf
+openai
+redis
