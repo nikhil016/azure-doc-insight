@@ -6,6 +6,8 @@ import os
 from uuid import uuid4
 
 from azure.cosmos import CosmosClient
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 app = func.FunctionApp()
@@ -14,9 +16,27 @@ SERVICE_BUS_QUEUE = "document-processing"
 COSMOS_DATABASE = "ai200-doc-insight"
 COSMOS_CONTAINER = "documents"
 
+_credential = None
+_cosmos_key = None
+
+
+def get_credential():
+    global _credential
+    if _credential is None:
+        _credential = DefaultAzureCredential()
+    return _credential
+
+
+def get_cosmos_key():
+    global _cosmos_key
+    if _cosmos_key is None:
+        secret_client = SecretClient(vault_url=os.environ["KEY_VAULT_URL"], credential=get_credential())
+        _cosmos_key = secret_client.get_secret("cosmos-primary-key").value
+    return _cosmos_key
+
 
 def get_documents_container():
-    client = CosmosClient(os.environ["COSMOS_ENDPOINT"], os.environ["COSMOS_KEY"])
+    client = CosmosClient(os.environ["COSMOS_ENDPOINT"], get_cosmos_key())
     return client.get_database_client(COSMOS_DATABASE).get_container_client(COSMOS_CONTAINER)
 
 
@@ -45,11 +65,11 @@ def on_document_uploaded(blob: func.InputStream):
         document_id,
     )
 
-    connection_string = os.environ["SERVICE_BUS_CONNECTION_STRING"]
+    sb_namespace_fqdn = os.environ["SERVICE_BUS_NAMESPACE_FQDN"]
     message_body = json.dumps({"document_id": document_id, "blob_uri": blob_uri})
 
-    with ServiceBusClient.from_connection_string(connection_string) as client:
+    with ServiceBusClient(fully_qualified_namespace=sb_namespace_fqdn, credential=get_credential()) as client:
         with client.get_queue_sender(SERVICE_BUS_QUEUE) as sender:
             sender.send_messages(ServiceBusMessage(message_body, message_id=document_id))
 
-    logging.info("Queued message: document_id=%s blob_uri=%s", document_id, blob_uri)
+    logging.info("Queued message via managed identity: document_id=%s blob_uri=%s", document_id, blob_uri)

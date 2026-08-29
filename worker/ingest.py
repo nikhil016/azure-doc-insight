@@ -5,6 +5,8 @@ import psycopg2
 from openai import AzureOpenAI
 from pypdf import PdfReader
 
+from azure_clients import get_secret
+
 EMBEDDING_DEPLOYMENT = "text-embedding-3-small"
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
@@ -15,7 +17,7 @@ def get_pg_connection():
         host=os.environ["PG_HOST"],
         dbname=os.environ.get("PG_DATABASE", "postgres"),
         user=os.environ["PG_USER"],
-        password=os.environ["PG_PASSWORD"],
+        password=get_secret("pg-admin-password"),
         sslmode="require",
     )
 
@@ -23,7 +25,7 @@ def get_pg_connection():
 def get_openai_client():
     return AzureOpenAI(
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_key=os.environ["AZURE_OPENAI_KEY"],
+        api_key=get_secret("openai-api-key"),
         api_version="2024-06-01",
     )
 

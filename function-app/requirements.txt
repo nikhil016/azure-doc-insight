@@ -5,3 +5,5 @@
 azure-functions
 azure-servicebus
 azure-cosmos
+azure-identity
+azure-keyvault-secrets

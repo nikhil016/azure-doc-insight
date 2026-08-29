@@ -4,3 +4,6 @@ azure-cosmos
 psycopg2-binary
 pypdf
 openai
+azure-identity
+azure-keyvault-secrets
+redis
