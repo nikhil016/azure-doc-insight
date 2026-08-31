@@ -100,7 +100,8 @@ if submitted and question:
     doc_id = None if document_filter == "(all documents)" else document_filter
     start = time.time()
     try:
-        result = answer_question(redis_client(), user_id or "dashboard-user", question, document_id=doc_id)
+        with st.spinner("Thinking... (first question after a restart can take a while -- it's fetching secrets and warming up Azure AD auth, not stuck)"):
+            result = answer_question(redis_client(), user_id or "dashboard-user", question, document_id=doc_id)
         elapsed_ms = (time.time() - start) * 1000
         badge = "CACHE HIT" if result.get("cache_hit") else "CACHE MISS (fresh embed + search)"
         st.markdown(f"**{badge}** — {elapsed_ms:.0f}ms")

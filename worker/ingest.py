@@ -13,12 +13,16 @@ CHUNK_OVERLAP = 100
 
 
 def get_pg_connection():
+    # Azure's firewall silently drops packets from disallowed IPs instead of
+    # rejecting them, so a stale firewall rule hangs the TCP handshake
+    # indefinitely without this -- fail fast with a clear error instead.
     return psycopg2.connect(
         host=os.environ["PG_HOST"],
         dbname=os.environ.get("PG_DATABASE", "postgres"),
         user=os.environ["PG_USER"],
         password=get_secret("pg-admin-password"),
         sslmode="require",
+        connect_timeout=10,
     )
 
 
@@ -27,6 +31,7 @@ def get_openai_client():
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_key=get_secret("openai-api-key"),
         api_version="2024-06-01",
+        timeout=20,
     )
 
 
