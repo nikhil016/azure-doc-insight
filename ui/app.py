@@ -22,8 +22,10 @@ def documents_container():
     return get_documents_container()
 
 
-@st.cache_resource
 def redis_client():
+    # Not cached: Redis auth uses a short-lived Entra ID token (~1hr TTL).
+    # Caching the client would cache the stale token past its expiry and
+    # every call would fail with "invalid username-password pair".
     return get_redis_client()
 
 
