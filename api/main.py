@@ -12,14 +12,23 @@ correlation_id_var = contextvars.ContextVar("correlation_id", default="-")
 
 class CorrelationIdFilter(logging.Filter):
     def filter(self, record):
-        record.correlation_id = correlation_id_var.get()
+        # If record already has correlation_id (from earlier filter), keep it.
+        # Otherwise set from contextvar or default to "-".
+        if not hasattr(record, 'correlation_id'):
+            record.correlation_id = correlation_id_var.get()
         return True
 
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s [correlation_id=%(correlation_id)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
 )
-logging.getLogger().addFilter(CorrelationIdFilter())
+# Apply filter to root and all existing loggers so records from uvicorn, fastapi, etc.
+# also have correlation_id injected.
+corr_filter = CorrelationIdFilter()
+logging.getLogger().addFilter(corr_filter)
+for name in logging.Logger.manager.loggerDict:
+    logging.getLogger(name).addFilter(corr_filter)
+
 logger = logging.getLogger("document-api")
 
 if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
