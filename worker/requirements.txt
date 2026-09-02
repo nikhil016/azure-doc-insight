@@ -3,6 +3,7 @@ azure-storage-blob
 azure-cosmos
 psycopg2-binary
 pypdf
+python-docx
 openai
 azure-identity
 azure-keyvault-secrets

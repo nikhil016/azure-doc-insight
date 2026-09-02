@@ -2,6 +2,7 @@ import io
 import os
 
 import psycopg2
+from docx import Document
 from openai import AzureOpenAI
 from pypdf import PdfReader
 
@@ -37,10 +38,17 @@ def get_openai_client():
 
 def extract_pages(content: bytes, blob_name: str):
     """Return a list of (page_number, text) tuples. PDFs are parsed page by
-    page; anything else is treated as a single page of UTF-8 text."""
-    if blob_name.lower().endswith(".pdf"):
+    page; .docx files (a binary zip format, not text) are parsed paragraph
+    by paragraph into a single page; anything else is treated as a single
+    page of UTF-8 text."""
+    name = blob_name.lower()
+    if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(content))
         return [(i + 1, page.extract_text() or "") for i, page in enumerate(reader.pages)]
+    if name.endswith(".docx"):
+        document = Document(io.BytesIO(content))
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        return [(1, text)]
     return [(1, content.decode("utf-8", errors="replace"))]
 
 
