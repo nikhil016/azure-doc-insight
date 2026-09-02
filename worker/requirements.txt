@@ -7,3 +7,4 @@ openai
 azure-identity
 azure-keyvault-secrets
 redis
+azure-monitor-opentelemetry

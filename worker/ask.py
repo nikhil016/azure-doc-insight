@@ -1,5 +1,7 @@
 import argparse
+import logging
 import time
+import uuid
 
 from cache import (
     cache_key,
@@ -9,12 +11,23 @@ from cache import (
     track_cache_key_for_document,
 )
 from search import semantic_search
+from telemetry import configure_monitoring, correlation_id_var
+
+logging.basicConfig(
+    level=logging.WARNING, format="%(asctime)s %(levelname)s [correlation_id=%(correlation_id)s] %(message)s"
+)
+logger = logging.getLogger("worker")
+logger.setLevel(logging.INFO)
+configure_monitoring(logger)
 
 
 def answer_question(redis_client, user_id: str, question: str, document_id: str = None, top_k: int = 3):
+    correlation_id_var.set(str(uuid.uuid4()))
     cached = get_cached_answer(redis_client, user_id, question)
     if cached is not None:
+        logger.info("Cache hit for question, user_id=%s", user_id)
         return {**cached, "cache_hit": True}
+    logger.info("Cache miss for question, user_id=%s", user_id)
 
     results = semantic_search(question, document_id=document_id, top_k=top_k)
     if not results:

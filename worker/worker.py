@@ -9,10 +9,14 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure_clients import get_blob_service_client, get_documents_container, get_service_bus_client
 from cache import get_redis_client, invalidate_document
 from ingest import ingest_document
+from telemetry import configure_monitoring, correlation_id_var
 
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.WARNING, format="%(asctime)s %(levelname)s [correlation_id=%(correlation_id)s] %(message)s"
+)
 logger = logging.getLogger("worker")
 logger.setLevel(logging.INFO)
+configure_monitoring(logger)
 
 QUEUE_NAME = "document-processing"
 
@@ -41,7 +45,13 @@ def download_blob(blob_uri):
     return blob_client.download_blob().readall()
 
 
-def process_message(body, documents_container, simulate_crash_before_complete=False):
+def extract_correlation_id(msg, fallback):
+    props = msg.application_properties or {}
+    value = props.get("correlation_id", props.get(b"correlation_id", fallback))
+    return value.decode("utf-8") if isinstance(value, bytes) else value
+
+
+def process_message(body, documents_container, correlation_id, simulate_crash_before_complete=False):
     document_id = body["document_id"]
     blob_uri = body["blob_uri"]
 
@@ -50,7 +60,9 @@ def process_message(body, documents_container, simulate_crash_before_complete=Fa
         logger.warning("Duplicate delivery detected, skipping reprocessing: document_id=%s", document_id)
         return "duplicate"
 
-    write_status(documents_container, document_id, "processing", {"blob_uri": blob_uri})
+    write_status(
+        documents_container, document_id, "processing", {"blob_uri": blob_uri, "correlation_id": correlation_id}
+    )
     logger.info("Processing document_id=%s blob_uri=%s", document_id, blob_uri)
 
     content = download_blob(blob_uri)
@@ -72,7 +84,7 @@ def process_message(body, documents_container, simulate_crash_before_complete=Fa
         documents_container,
         document_id,
         "completed",
-        {"blob_uri": blob_uri, "bytes": len(content), "chunk_count": chunk_count},
+        {"blob_uri": blob_uri, "bytes": len(content), "chunk_count": chunk_count, "correlation_id": correlation_id},
     )
     logger.info("Completed document_id=%s", document_id)
     return "completed"
@@ -85,37 +97,45 @@ def run(max_messages=None, simulate_crash_before_complete=False):
     with get_service_bus_client() as client:
         with client.get_queue_receiver(QUEUE_NAME, max_wait_time=20) as receiver:
             for msg in receiver:
+                correlation_id = extract_correlation_id(msg, fallback=str(msg.message_id))
+                token = correlation_id_var.set(correlation_id)
                 try:
-                    raw_body = b"".join(msg.body).decode("utf-8")
-                    payload = json.loads(raw_body)
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    logger.error("Malformed message, dead-lettering: %s", exc)
-                    receiver.dead_letter_message(msg, reason="MalformedJson", error_description=str(exc))
+                    try:
+                        raw_body = b"".join(msg.body).decode("utf-8")
+                        payload = json.loads(raw_body)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                        logger.error("Malformed message, dead-lettering: %s", exc)
+                        receiver.dead_letter_message(msg, reason="MalformedJson", error_description=str(exc))
+                        handled += 1
+                        if max_messages and handled >= max_messages:
+                            break
+                        continue
+
+                    try:
+                        result = process_message(
+                            payload,
+                            documents_container,
+                            correlation_id,
+                            simulate_crash_before_complete=simulate_crash_before_complete,
+                        )
+                        receiver.complete_message(msg)
+                        logger.info(
+                            "Message completed: document_id=%s result=%s", payload.get("document_id"), result
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Processing failed, abandoning for retry: document_id=%s error=%s delivery_count=%s",
+                            payload.get("document_id"),
+                            exc,
+                            msg.delivery_count,
+                        )
+                        receiver.abandon_message(msg)
+
                     handled += 1
                     if max_messages and handled >= max_messages:
                         break
-                    continue
-
-                try:
-                    result = process_message(
-                        payload,
-                        documents_container,
-                        simulate_crash_before_complete=simulate_crash_before_complete,
-                    )
-                    receiver.complete_message(msg)
-                    logger.info("Message completed: document_id=%s result=%s", payload.get("document_id"), result)
-                except Exception as exc:
-                    logger.error(
-                        "Processing failed, abandoning for retry: document_id=%s error=%s delivery_count=%s",
-                        payload.get("document_id"),
-                        exc,
-                        msg.delivery_count,
-                    )
-                    receiver.abandon_message(msg)
-
-                handled += 1
-                if max_messages and handled >= max_messages:
-                    break
+                finally:
+                    correlation_id_var.reset(token)
 
     logger.info("Worker run complete. Messages handled: %d", handled)
 

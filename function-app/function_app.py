@@ -43,11 +43,16 @@ def get_documents_container():
 @app.blob_trigger(arg_name="blob", path="uploads/{name}", connection="AzureWebJobsStorage")
 def on_document_uploaded(blob: func.InputStream):
     document_id = str(uuid4())
+    correlation_id = str(uuid4())
+    # Functions' built-in App Insights bridge only promotes extra fields to
+    # customDimensions when nested under this specific key.
+    dims = {"custom_dimensions": {"correlation_id": correlation_id, "document_id": document_id}}
     blob_uri = f"https://{os.environ['STORAGE_ACCOUNT_NAME']}.blob.core.windows.net/{blob.name}"
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     record = {
         "id": document_id,
+        "correlation_id": correlation_id,
         "blob_name": blob.name,
         "blob_uri": blob_uri,
         "size_bytes": blob.length,
@@ -63,13 +68,22 @@ def on_document_uploaded(blob: func.InputStream):
         blob.name,
         blob.length,
         document_id,
+        extra=dims,
     )
 
     sb_namespace_fqdn = os.environ["SERVICE_BUS_NAMESPACE_FQDN"]
-    message_body = json.dumps({"document_id": document_id, "blob_uri": blob_uri})
+    message_body = json.dumps({"document_id": document_id, "blob_uri": blob_uri, "correlation_id": correlation_id})
 
     with ServiceBusClient(fully_qualified_namespace=sb_namespace_fqdn, credential=get_credential()) as client:
         with client.get_queue_sender(SERVICE_BUS_QUEUE) as sender:
-            sender.send_messages(ServiceBusMessage(message_body, message_id=document_id))
+            sender.send_messages(
+                ServiceBusMessage(
+                    message_body,
+                    message_id=document_id,
+                    application_properties={"correlation_id": correlation_id},
+                )
+            )
 
-    logging.info("Queued message via managed identity: document_id=%s blob_uri=%s", document_id, blob_uri)
+    logging.info(
+        "Queued message via managed identity: document_id=%s blob_uri=%s", document_id, blob_uri, extra=dims
+    )

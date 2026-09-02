@@ -1,16 +1,19 @@
 import argparse
+import logging
 import os
 
 import psycopg2
 
 from ingest import get_openai_client, get_pg_connection
 
+logger = logging.getLogger("worker")
+
 
 def semantic_search(question: str, document_id: str = None, top_k: int = 3):
     client = get_openai_client()
-    query_embedding = client.embeddings.create(
-        model="text-embedding-3-small", input=[question]
-    ).data[0].embedding
+    response = client.embeddings.create(model="text-embedding-3-small", input=[question])
+    logger.info("Query embedding token usage: total_tokens=%d", response.usage.total_tokens)
+    query_embedding = response.data[0].embedding
 
     conn = get_pg_connection()
     try:
