@@ -14,7 +14,7 @@ from search import semantic_search
 from telemetry import configure_monitoring, correlation_id_var
 
 logging.basicConfig(
-    level=logging.WARNING, format="%(asctime)s %(levelname)s [correlation_id=%(correlation_id)s] %(message)s"
+    level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s"
 )
 logger = logging.getLogger("worker")
 logger.setLevel(logging.INFO)
