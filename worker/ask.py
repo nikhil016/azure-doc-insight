@@ -10,6 +10,7 @@ from cache import (
     set_cached_answer,
     track_cache_key_for_document,
 )
+from ingest import get_openai_client
 from search import semantic_search
 from telemetry import configure_monitoring, correlation_id_var
 
@@ -19,6 +20,37 @@ logging.basicConfig(
 logger = logging.getLogger("worker")
 logger.setLevel(logging.INFO)
 configure_monitoring(logger)
+
+CHAT_DEPLOYMENT = "gpt-4.1-mini"
+
+
+def generate_answer(question: str, results) -> str:
+    """Synthesize an answer from retrieved chunks with a chat model, so
+    questions that require reasoning across chunks (e.g. summing job dates
+    into a total years of experience) get a real answer instead of the
+    single nearest-matching raw text snippet."""
+    context = "\n\n".join(
+        f"[Source: page {page}]\n{content}" for _doc_id, page, _chunk_index, content, _score in results
+    )
+
+    client = get_openai_client()
+    response = client.chat.completions.create(
+        model=CHAT_DEPLOYMENT,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Answer the question using only the provided context. "
+                    "If the context doesn't contain enough information, say so plainly. Be concise."
+                ),
+            },
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+        ],
+        temperature=0,
+        max_tokens=300,
+    )
+    logger.info("Chat completion token usage: total_tokens=%d", response.usage.total_tokens)
+    return response.choices[0].message.content
 
 
 def answer_question(redis_client, user_id: str, question: str, document_id: str = None, top_k: int = 3):
@@ -38,9 +70,11 @@ def answer_question(redis_client, user_id: str, question: str, document_id: str 
         for doc_id, page, chunk_index, _content, score in results
     ]
     top_doc_id, top_page, _chunk_index, top_content, top_score = results[0]
+    generated_answer = generate_answer(question, results)
 
     answer = {
         "question": question,
+        "answer": generated_answer,
         "top_document_id": top_doc_id,
         "top_page": top_page,
         "top_content": top_content,
@@ -70,5 +104,6 @@ if __name__ == "__main__":
         result = answer_question(client, args.user_id, args.question, document_id=args.document_id)
         elapsed_ms = (time.time() - start) * 1000
         print(f"[call {i + 1}] cache_hit={result['cache_hit']} elapsed={elapsed_ms:.1f}ms")
+        print(f"  answer={result.get('answer')}")
         print(f"  top_page={result.get('top_page')} score={result.get('score')}")
         print(f"  content={result.get('top_content', '')[:120]!r}")

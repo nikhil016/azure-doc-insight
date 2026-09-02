@@ -106,7 +106,12 @@ if submitted and question:
         badge = "CACHE HIT" if result.get("cache_hit") else "CACHE MISS (fresh embed + search)"
         st.markdown(f"**{badge}** — {elapsed_ms:.0f}ms")
         if result.get("top_content"):
-            st.write(result["top_content"])
+            if result.get("answer"):
+                st.markdown(f"### {result['answer']}")
+                with st.expander("Top retrieved chunk (raw)"):
+                    st.write(result["top_content"])
+            else:
+                st.write(result["top_content"])
             st.caption(f"Source: document {result['top_document_id']}, page {result['top_page']}, score {result['score']}")
             with st.expander("All retrieved sources"):
                 st.json(result["sources"])
